@@ -27,7 +27,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func createPipe(ctx context.Context, args [][]string, in io.Reader, done chan<- struct{}) {
+type exit struct {
+	valid bool
+	ret   int
+}
+
+func createPipe(ctx context.Context, args [][]string, in io.Reader, done chan<- exit) {
 	defer close(done)
 
 	cmd := exec.CommandContext(ctx, args[0][0], args[0][1:]...)
@@ -36,7 +41,7 @@ func createPipe(ctx context.Context, args [][]string, in io.Reader, done chan<- 
 	cmd.Stdout = os.Stdout
 
 	ctx2, cancel := context.WithCancel(ctx)
-	done2 := make(chan struct{})
+	done2 := make(chan exit, 1)
 
 	var w io.WriteCloser
 	if len(args) > 1 {
@@ -59,7 +64,17 @@ func createPipe(ctx context.Context, args [][]string, in io.Reader, done chan<- 
 	if w != nil {
 		w.Close()
 	}
-	<-done2 // Wait for downstream to die.
+	next := <-done2
+	if code := cmd.ProcessState.ExitCode(); code == 0 && w != nil {
+		// If this part succeeded, pass along the exit code
+		// from the next step.
+		done <- next
+	} else {
+		done <- exit{
+			valid: true,
+			ret:   code,
+		}
+	}
 }
 
 func main() {
@@ -78,7 +93,11 @@ func main() {
 		log.Fatalf("Failed to parse json: %v", err)
 	}
 	log.Infof("Running…")
-	done := make(chan struct{})
+	done := make(chan exit, 1)
 	createPipe(ctx, pipes, os.Stdin, done)
-	<-done
+	rc := <-done
+	if !rc.valid {
+		log.Fatal("Did not get a valid return code for pipeline.")
+	}
+	os.Exit(rc.ret)
 }

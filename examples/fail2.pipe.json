@@ -1,0 +1,4 @@
+[
+    ["cat", "/dev/null"],
+    ["dd", "of=/does/not/exist"]
+]
