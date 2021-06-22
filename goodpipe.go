@@ -77,27 +77,30 @@ func createPipe(ctx context.Context, args [][]string, in io.Reader, done chan<- 
 	}
 }
 
-func main() {
-	flag.Parse()
+func run(r io.Reader) int {
 	ctx := context.Background()
-	if flag.NArg() != 0 {
-		log.Fatalf("Trailing args on cmdline: %q", flag.Args())
-	}
-
-	b, err := ioutil.ReadAll(os.Stdin)
+	b, err := ioutil.ReadAll(r)
 	if err != nil {
 		log.Fatalf("Failed to read config from stdin: %v", err)
 	}
 	var pipes [][]string
 	if err := json.Unmarshal(b, &pipes); err != nil {
-		log.Fatalf("Failed to parse json: %v", err)
+		log.Fatalf("Failed to parse json %q: %v", string(b), err)
 	}
 	log.Infof("Running…")
 	done := make(chan exit, 1)
-	createPipe(ctx, pipes, os.Stdin, done)
+	createPipe(ctx, pipes, r, done)
 	rc := <-done
 	if !rc.valid {
 		log.Fatal("Did not get a valid return code for pipeline.")
 	}
-	os.Exit(rc.ret)
+	return rc.ret
+}
+
+func main() {
+	flag.Parse()
+	if flag.NArg() != 0 {
+		log.Fatalf("Trailing args on cmdline: %q", flag.Args())
+	}
+	os.Exit(run(os.Stdin))
 }
