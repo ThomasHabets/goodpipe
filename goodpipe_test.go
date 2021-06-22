@@ -11,13 +11,11 @@ func TestThings(t *testing.T) {
 		input string
 		exit  int
 	}{
-		/*
-			{
-				"Empty",
-				`[]`,
-				0,
-			},
-		*/
+		{
+			"Empty",
+			`[]`,
+			0,
+		},
 		{
 			"Trivial",
 			`[["true"]]`,

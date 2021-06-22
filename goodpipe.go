@@ -88,6 +88,9 @@ func run(r io.Reader) int {
 		log.Fatalf("Failed to parse json %q: %v", string(b), err)
 	}
 	log.Infof("Running…")
+	if len(pipes) == 0 {
+		return 0
+	}
 	done := make(chan exit, 1)
 	createPipe(ctx, pipes, r, done)
 	rc := <-done
