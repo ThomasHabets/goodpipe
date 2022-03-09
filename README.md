@@ -37,7 +37,7 @@ $ ./goodpipe < test.pipe.json
 $ goodpipe <<EOF
 [
   ["gsutil", "cat", "gs://example/input-unsorted.txt"],
-  ["sort", "-S300M", "-n", "input.txt"],
+  ["sort", "-S300M", "-n"],
   ["gzip", "-9"],
   ["gsutil", "cp", "-", "gs://example/input-sorted-numerically.txt.gz"]
 ]
