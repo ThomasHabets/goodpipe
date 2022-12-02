@@ -80,6 +80,7 @@ const (
 	stateIdle = iota
 	stateData
 	stateDataEsc
+	stateDone
 )
 
 type decapper struct {
@@ -89,21 +90,17 @@ type decapper struct {
 }
 
 func (d *decapper) Write(in []byte) (int, error) {
-	if d.state == stateIdle {
-		switch in[0] {
-		case sob:
-			d.state = stateData
-			n, err := d.Write(in[1:])
-			return n + 1, err
-		case eof:
-			d.succeeded = true
-			return 1, nil
-		}
-	}
-
 	var o []byte
 	for n := 0; n < len(in); n++ {
 		switch d.state {
+		case stateIdle:
+			switch in[n] {
+			case sob:
+				d.state = stateData
+			case eof:
+				d.succeeded = true
+				d.state = stateDone
+			}
 		case stateData:
 			switch in[n] {
 			case esc:
@@ -127,6 +124,8 @@ func (d *decapper) Write(in []byte) (int, error) {
 			default:
 				log.Fatal("invalid esc")
 			}
+		case stateDone:
+			log.Fatal("garbage after EOF")
 		}
 	}
 	if _, err := d.out.Write(o); err != nil {
