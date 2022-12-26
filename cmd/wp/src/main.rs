@@ -128,13 +128,13 @@ fn main() {
         .trailing_var_arg(true)
         .arg(
             Arg::new("input")
-                .help("Input")
+                .help("Enable input processing")
                 .short('i')
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("output")
-                .help("Output")
+                .help("Enable output processing")
                 .short('o')
                 .action(ArgAction::SetTrue),
         )
