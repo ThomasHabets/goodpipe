@@ -4,6 +4,7 @@ use std::io::Read;
 use std::io::Write;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::mpsc;
 use std::thread;
 
 const ESC: u8 = '_' as u8;
@@ -169,6 +170,8 @@ fn main() {
         .spawn()
         .expect("failed to execute child");
 
+    let (ok_out_tx, ok_out_rx) = mpsc::channel();
+
     let othread = (|| {
         if *flag_o {
             let mut childout = child.stdout.take().unwrap();
@@ -183,13 +186,17 @@ fn main() {
                         .write(&encap(&buffer[0..n]))
                         .expect("write error");
                 }
-                io::stdout()
-                    .write(&vec![EOF])
-                    .expect("write error writing eof");
+                if ok_out_rx.recv().unwrap() {
+                    io::stdout()
+                        .write(&vec![EOF])
+                        .expect("write error writing eof");
+                }
             });
         }
         thread::spawn(move || {})
     })();
+
+    let (ctx, crx) = mpsc::channel();
 
     let ithread = (|| {
         if *flag_i {
@@ -202,21 +209,37 @@ fn main() {
                     if n == 0 {
                         break;
                     }
-                    // TODO: handle it all.
                     let buf = &buffer[0..n];
                     if dec.add(&childin, buf) {
                         // Got EOF.
+                        ctx.send(child).unwrap();
                         return;
                     }
                 }
+                child.kill().expect("failed to kill child");
+                // TODO: confirmed dead, and dead with error code.
+                ctx.send(child).unwrap();
                 panic!("TODO: error: input ended without an EOF");
             });
+        } else {
+            ctx.send(child).unwrap();
         }
         thread::spawn(move || {})
     })();
 
+    let mut child = crx.recv().expect("main thread getting back client object");
     let ecode = child.wait().expect("failed to wait on child");
-    assert!(ecode.success());
+    if !ecode.success() {
+        std::process::exit(match ecode.code() {
+            Some(code) => code,
+            None => 1,
+        });
+    }
+    if *flag_o {
+        ok_out_tx
+            .send(true)
+            .expect("failed to send ok to stdout thread");
+    }
     othread.join().expect("failed to join othread");
     ithread.join().expect("failed to join ithread");
 }
