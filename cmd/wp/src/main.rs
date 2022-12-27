@@ -156,7 +156,7 @@ fn main() {
     let flag_o = matches.get_one::<bool>("output").expect("blah");
     let flag_i = matches.get_one::<bool>("input").expect("blah");
 
-    // todo: move all but flag parsing to lib.
+    // TODO: move all but flag parsing to lib.
     let mut prep = Command::new(args[0]);
     if *flag_o {
         prep.stdout(Stdio::piped());
@@ -200,8 +200,9 @@ fn main() {
 
     let ithread = (|| {
         if *flag_i {
-            let childin = child.stdin.take().unwrap();
+            //let childin = child.stdin.take().unwrap();
             return thread::spawn(move || {
+                let childin = child.stdin.as_mut().unwrap();
                 let mut dec = Decapper::new();
                 loop {
                     let mut buffer = vec![0; 128 as usize];
@@ -212,27 +213,43 @@ fn main() {
                     let buf = &buffer[0..n];
                     if dec.add(&childin, buf) {
                         // Got EOF.
-                        ctx.send(child).unwrap();
+                        drop(childin);
+                        ctx.send(child.wait()).unwrap();
                         return;
                     }
                 }
                 child.kill().expect("failed to kill child");
-                // TODO: confirmed dead, and dead with error code.
-                ctx.send(child).unwrap();
-                panic!("TODO: error: input ended without an EOF");
+                let ws = child.wait();
+                if let Ok(ecode) = ws {
+                    if !ecode.success() {
+                        ctx.send(ws).unwrap();
+                        return;
+                    }
+                    // TODO: send() a Result error instead.
+                    panic!("Killed child, but it died a happy process");
+                }
+                ctx.send(ws).unwrap();
             });
-        } else {
-            ctx.send(child).unwrap();
         }
-        thread::spawn(move || {})
+        thread::spawn(move || {
+            ctx.send(child.wait()).unwrap();
+        })
     })();
 
-    let mut child = crx.recv().expect("main thread getting back client object");
-    let ecode = child.wait().expect("failed to wait on child");
+    let ecode = crx
+        .recv()
+        .expect("main thread getting back client object")
+        .expect("wait success");
     if !ecode.success() {
         std::process::exit(match ecode.code() {
-            Some(code) => code,
-            None => 1,
+            Some(code) => {
+                eprintln!("Subprocess died with exit code {}", code);
+                code
+            }
+            None => {
+                eprintln!("Subprocess died with NO exit code (probably signal)");
+                1
+            }
         });
     }
     if *flag_o {
