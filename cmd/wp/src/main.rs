@@ -119,7 +119,7 @@ impl Decapper {
         if out.is_empty() {
             return Some(ret);
         }
-        match next.write(out.as_slice()) {
+        match next.write_all(out.as_slice()) {
             Ok(_) => Some(ret),
             Err(e) => {
                 eprintln!("wp: Error writing to stdout: {}", e);
