@@ -8,15 +8,15 @@ use std::process::Stdio;
 use std::sync::mpsc;
 use std::thread;
 
-const ESC: u8 = '_' as u8;
-const EESC: u8 = '-' as u8;
+const ESC: u8 = b'_';
+const EESC: u8 = b'-';
 
-const EOF: u8 = 'Z' as u8;
-const SOB: u8 = '<' as u8;
-const EOB: u8 = '>' as u8;
+const EOF: u8 = b'Z';
+const SOB: u8 = b'<';
+const EOB: u8 = b'>';
 
-const ESOB: u8 = '[' as u8;
-const EEOB: u8 = ']' as u8;
+const ESOB: u8 = b'[';
+const EEOB: u8 = b']';
 
 #[cfg(test)]
 mod tests {
@@ -116,7 +116,7 @@ impl Decapper {
                 },
             };
         }
-        if out.len() == 0 {
+        if out.is_empty() {
             return Some(ret);
         }
         match next.write(out.as_slice()) {
@@ -130,8 +130,7 @@ impl Decapper {
 }
 
 fn encap(inp: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.push(SOB);
+    let mut out = vec![SOB];
     for ch in inp {
         match *ch {
             ESC => {
@@ -152,7 +151,7 @@ fn encap(inp: &[u8]) -> Vec<u8> {
         }
     }
     out.push(EOB);
-    return out;
+    out
 }
 
 fn main() {
@@ -215,7 +214,7 @@ fn main() {
                 .expect("failed to take ownership of child stdout");
             return thread::spawn(move || {
                 loop {
-                    let mut buffer = vec![0; 128 as usize];
+                    let mut buffer = vec![0; 128_usize];
                     let n = childout
                         .read(&mut buffer)
                         .expect("failed to read from child stdout");
@@ -223,15 +222,15 @@ fn main() {
                         break;
                     }
                     io::stdout()
-                        .write(&encap(&buffer[0..n]))
-                        .expect("error writing to stdoutr");
+                        .write_all(&encap(&buffer[0..n]))
+                        .expect("error writing to stdout");
                 }
                 if ok_out_rx
                     .recv()
                     .expect("othread failed to receive if it should send EOF")
                 {
                     io::stdout()
-                        .write(&vec![EOF])
+                        .write_all(&[EOF])
                         .expect("write error writing eof");
                 }
             });
@@ -250,7 +249,7 @@ fn main() {
             return thread::spawn(move || {
                 let mut dec = Decapper::new();
                 loop {
-                    let mut buffer = vec![0; 128 as usize];
+                    let mut buffer = vec![0; 128_usize];
                     let n = io::stdin()
                         .read(&mut buffer)
                         .expect("failed to read from stdin");
