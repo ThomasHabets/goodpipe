@@ -2,6 +2,7 @@ use clap::{command, Arg, ArgAction};
 use std::io;
 use std::io::Read;
 use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::mpsc;
@@ -37,34 +38,48 @@ enum State {
 #[derive(Debug)]
 struct Decapper {
     state: State,
+    count: u64,
 }
 
 impl Decapper {
     fn new() -> Decapper {
-        Decapper { state: State::Idle }
+        Decapper {
+            state: State::Idle,
+            count: 0,
+        }
     }
-    fn add(&mut self, mut next: &std::process::ChildStdin, x: &[u8]) -> bool {
+    // Return:
+    // * Some(true) if EOF found.
+    // * Some(false) if we should carry on.
+    // * None if we should stop. Bad input.
+    fn add(&mut self, mut next: &std::process::ChildStdin, x: &[u8]) -> Option<bool> {
         let mut out = Vec::new();
-        let mut do_write = |out: &mut Vec<u8>| {
-            if out.len() > 0 {
-                next.write(out.as_slice()).expect("write error");
-                out.clear();
-            }
-        };
+        let mut ret = false;
         for ch in x {
+            self.count += 1;
             match self.state {
                 State::Idle => match *ch {
-                    EOF => return true,
+                    EOF => {
+                        ret = true;
+                        break;
+                    }
                     SOB => {
                         self.state = State::Data;
                     }
                     other => {
-                        panic!("TODO: Invalid character in input: {}", other);
+                        let u = &[other];
+                        let s = std::str::from_utf8(u).unwrap_or("<binary>");
+                        eprintln!(
+                            "wp: got invalid command character in input at index {}: {} ({})",
+                            self.count - 1,
+                            other,
+                            s
+                        );
+                        return None;
                     }
                 },
                 State::Data => match *ch {
                     EOB => {
-                        do_write(&mut out);
                         self.state = State::Idle;
                     }
                     ESC => {
@@ -88,13 +103,29 @@ impl Decapper {
                         self.state = State::Data;
                     }
                     other => {
-                        panic!("TODO: invalid escape input: {}", other);
+                        let u = &[other];
+                        let s = std::str::from_utf8(u).unwrap_or("<binary>");
+                        eprintln!(
+                            "wp: invalid escape input at index {}: {} ({})",
+                            self.count - 1,
+                            other,
+                            s
+                        );
+                        return None;
                     }
                 },
             };
         }
-        do_write(&mut out);
-        false
+        if out.len() == 0 {
+            return Some(ret);
+        }
+        match next.write(out.as_slice()) {
+            Ok(_) => Some(ret),
+            Err(e) => {
+                eprintln!("wp: Error writing to stdout: {}", e);
+                None
+            }
+        }
     }
 }
 
@@ -153,8 +184,12 @@ fn main() {
         .map(|v| v.as_str())
         .collect::<Vec<_>>();
 
-    let flag_o = matches.get_one::<bool>("output").expect("blah");
-    let flag_i = matches.get_one::<bool>("input").expect("blah");
+    let flag_o = matches
+        .get_one::<bool>("output")
+        .expect("Failed to get output flag");
+    let flag_i = matches
+        .get_one::<bool>("input")
+        .expect("Failed to get input flag");
 
     // TODO: move all but flag parsing to lib.
     let mut prep = Command::new(args[0]);
@@ -174,19 +209,27 @@ fn main() {
 
     let othread = (|| {
         if *flag_o {
-            let mut childout = child.stdout.take().unwrap();
+            let mut childout = child
+                .stdout
+                .take()
+                .expect("failed to take ownership of child stdout");
             return thread::spawn(move || {
                 loop {
                     let mut buffer = vec![0; 128 as usize];
-                    let n = childout.read(&mut buffer).expect("buffer overflow");
+                    let n = childout
+                        .read(&mut buffer)
+                        .expect("failed to read from child stdout");
                     if n == 0 {
                         break;
                     }
                     io::stdout()
                         .write(&encap(&buffer[0..n]))
-                        .expect("write error");
+                        .expect("error writing to stdoutr");
                 }
-                if ok_out_rx.recv().unwrap() {
+                if ok_out_rx
+                    .recv()
+                    .expect("othread failed to receive if it should send EOF")
+                {
                     io::stdout()
                         .write(&vec![EOF])
                         .expect("write error writing eof");
@@ -200,39 +243,55 @@ fn main() {
 
     let ithread = (|| {
         if *flag_i {
-            //let childin = child.stdin.take().unwrap();
+            let childin = child
+                .stdin
+                .take()
+                .expect("failed to take ownership of child stdin");
             return thread::spawn(move || {
-                let childin = child.stdin.as_mut().unwrap();
                 let mut dec = Decapper::new();
                 loop {
                     let mut buffer = vec![0; 128 as usize];
-                    let n = io::stdin().read(&mut buffer).expect("buffer overflow");
+                    let n = io::stdin()
+                        .read(&mut buffer)
+                        .expect("failed to read from stdin");
                     if n == 0 {
                         break;
                     }
                     let buf = &buffer[0..n];
-                    if dec.add(&childin, buf) {
-                        // Got EOF.
-                        drop(childin);
-                        ctx.send(child.wait()).unwrap();
-                        return;
+                    match dec.add(&childin, buf) {
+                        Some(true) => {
+                            // Got EOF.
+                            drop(childin);
+                            ctx.send(child.wait())
+                                .expect("failed to send wait status from ithread");
+                            return true;
+                        }
+                        Some(false) => (),
+                        None => break,
                     }
                 }
                 child.kill().expect("failed to kill child");
                 let ws = child.wait();
                 if let Ok(ecode) = ws {
-                    if !ecode.success() {
-                        ctx.send(ws).unwrap();
-                        return;
+                    if ecode.success() {
+                        eprintln!("wp: Killed child, but it died a happy process");
                     }
-                    // TODO: send() a Result error instead.
-                    panic!("Killed child, but it died a happy process");
                 }
-                ctx.send(ws).unwrap();
+                ctx.send(ws)
+                    .expect("failed to send wait status from ithread after kill");
+                // TODO: Ideally we would send a fake error if
+                // kill results in exit code 0, but I can't find
+                // how to do that.
+                //
+                // Instead we're sending the success, but having
+                // the thread return false.
+                false
             });
         }
         thread::spawn(move || {
-            ctx.send(child.wait()).unwrap();
+            ctx.send(child.wait())
+                .expect("failed to send wait status from fake ithread");
+            true
         })
     })();
 
@@ -241,13 +300,15 @@ fn main() {
         .expect("main thread getting back client object")
         .expect("wait success");
     if !ecode.success() {
-        std::process::exit(match ecode.code() {
-            Some(code) => {
-                eprintln!("Subprocess died with exit code {}", code);
+        std::process::exit({
+            if let Some(code) = ecode.code() {
+                eprintln!("wp: Subprocess died with exit code {}", code);
                 code
-            }
-            None => {
-                eprintln!("Subprocess died with NO exit code (probably signal)");
+            } else if let Some(sig) = ecode.signal() {
+                eprintln!("wp: died due to signal {}", sig);
+                1
+            } else {
+                eprintln!("wp: with no exit code and no signal");
                 1
             }
         });
@@ -258,5 +319,7 @@ fn main() {
             .expect("failed to send ok to stdout thread");
     }
     othread.join().expect("failed to join othread");
-    ithread.join().expect("failed to join ithread");
+    if !ithread.join().expect("failed to join ithread") {
+        std::process::exit(1);
+    }
 }
