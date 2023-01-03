@@ -214,7 +214,7 @@ fn main() {
                 .expect("failed to take ownership of child stdout");
             return thread::spawn(move || {
                 loop {
-                    let mut buffer = vec![0; 128_usize];
+                    let mut buffer = vec![0; 4096_usize];
                     let n = childout
                         .read(&mut buffer)
                         .expect("failed to read from child stdout");
@@ -249,7 +249,7 @@ fn main() {
             return thread::spawn(move || {
                 let mut dec = Decapper::new();
                 loop {
-                    let mut buffer = vec![0; 128_usize];
+                    let mut buffer = vec![0; 4096_usize];
                     let n = io::stdin()
                         .read(&mut buffer)
                         .expect("failed to read from stdin");
