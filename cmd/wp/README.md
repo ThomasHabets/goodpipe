@@ -1,3 +1,9 @@
+# Wrap pipe
+
+This wraps the pipe by embedding metadata in the stdout and stdin streams, so
+that the final step in a pipeline can tell the difference between EOF coming
+from failure and EOF coming from actual EOF.
+
 ## Build static
 
 ```
