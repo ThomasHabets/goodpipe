@@ -3,8 +3,6 @@
 Goodpipe is a tool to create better data pipelines. Its scope is restricted to
 things that run on the local machine.
 
-This is not an official Google product.
-
 ## What problem it's solving
 
 When you run `foo | bar`, there's no way for `bar` to know if `foo` actually
